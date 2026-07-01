@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: buildapp-postgres-temp
+    environment:
+      POSTGRES_USER: buildapp
+      POSTGRES_PASSWORD: buildapp
+      POSTGRES_DB: buildapp
+    ports:
+      - "5430:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U buildapp -d buildapp"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
