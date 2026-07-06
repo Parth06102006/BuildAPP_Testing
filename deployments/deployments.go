@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"build_app_test/upload"
@@ -23,10 +24,11 @@ import (
 
 const buildRoot = "C:\\tmp\\build"
 
-var dockerfileTemplates = map[string]string{
-	"go":     filepath.Join("templates", "Dockerfile.go.tmpl"),
-	"node":   filepath.Join("templates", "Dockerfile.node.tmpl"),
-	"python": filepath.Join("templates", "Dockerfile.python.tmpl"),
+var pmInstallCommands = map[string]string{
+	"npm":  "npm ci",
+	"pnpm": "pnpm install --frozen-lockfile",
+	"yarn": "yarn install --frozen-lockfile",
+	"bun":  "bun install --frozen-lockfile",
 }
 
 func cloneRepo(cloneURL string, deploymentID string) (string, error) {
@@ -87,30 +89,10 @@ func updateOutputURL(ctx context.Context, db *sql.DB, job queue.DeployJob, outpu
 	return err
 }
 
-func detectBuildType(repoPath string) (string, error) {
-	switch {
-	case fileExists(repoPath, "Dockerfile"):
-		return "docker", nil
-	case fileExists(repoPath, "package.json"):
-		return "node", nil
-	case fileExists(repoPath, "requirements.txt"), fileExists(repoPath, "pyproject.toml"):
-		return "python", nil
-	case fileExists(repoPath, "go.mod"):
-		return "go", nil
-	default:
-		return "", errors.New("could not detect the project type")
-	}
-}
-
-func fileExists(dir, name string) bool {
-	_, err := os.Stat(filepath.Join(dir, name))
-	return err == nil
-}
-
-func writeDockerfile(repoPath, buildType string) error {
-	templatePath, ok := dockerfileTemplates[buildType]
-	if !ok {
-		return fmt.Errorf("no template for build type %q", buildType)
+func writeDockerfile(repoPath string, builder *Builder, pm string) error {
+	templatePath := filepath.Join("templates", builder.Template)
+	if builder.Template == "Dockerfile" {
+		return nil
 	}
 
 	data, err := os.ReadFile(templatePath)
@@ -118,7 +100,15 @@ func writeDockerfile(repoPath, buildType string) error {
 		return err
 	}
 
-	return os.WriteFile(filepath.Join(repoPath, "Dockerfile"), data, 0o644)
+	content := string(data)
+	installCmd := pmInstallCommands[pm]
+	if installCmd != "" && pm != "npm" {
+		content = strings.ReplaceAll(content, "npm ci", installCmd)
+		content = strings.ReplaceAll(content, "npm run", pm+" run")
+		content = strings.ReplaceAll(content, `"npm`, `"`+pm)
+	}
+
+	return os.WriteFile(filepath.Join(repoPath, "Dockerfile"), []byte(content), 0o644)
 }
 
 func buildImage(ctx context.Context, cli *client.Client, repoPath string, imageTag string) error {
@@ -195,14 +185,15 @@ func ProcessDeployment(ctx context.Context, db *sql.DB, job queue.DeployJob, art
 	}
 	defer os.RemoveAll(repoPath)
 
-	buildType, err := detectBuildType(repoPath)
+	builder, err := detectFramework(repoPath)
 	if err != nil {
 		_ = updateStatus(ctx, db, job, "failed")
 		return err
 	}
+	pm := detectPackageManager(repoPath)
 
-	if buildType != "docker" {
-		if err := writeDockerfile(repoPath, buildType); err != nil {
+	if builder.Name != "docker" {
+		if err := writeDockerfile(repoPath, builder, pm); err != nil {
 			_ = updateStatus(ctx, db, job, "failed")
 			return err
 		}
