@@ -25,10 +25,10 @@ import (
 const buildRoot = "C:\\tmp\\build"
 
 var pmInstallCommands = map[string]string{
-	"npm":  "npm ci",
-	"pnpm": "pnpm install --frozen-lockfile",
-	"yarn": "yarn install --frozen-lockfile",
-	"bun":  "bun install --frozen-lockfile",
+	"npm":  "npm ci --ignore-scripts",
+	"pnpm": "pnpm install --frozen-lockfile --ignore-scripts",
+	"yarn": "yarn install --frozen-lockfile --ignore-scripts",
+	"bun":  "bun install --frozen-lockfile --ignore-scripts",
 }
 
 func cloneRepo(cloneURL string, deploymentID string) (string, error) {
@@ -103,7 +103,11 @@ func writeDockerfile(repoPath string, builder *Builder, pm string) error {
 	content := string(data)
 	installCmd := pmInstallCommands[pm]
 	if installCmd != "" && pm != "npm" {
-		content = strings.ReplaceAll(content, "npm ci", installCmd)
+		if pm == "bun" {
+			content = strings.ReplaceAll(content, "FROM node:20-alpine", "FROM oven/bun:1-alpine")
+			content = strings.ReplaceAll(content, "--omit=dev", "--production")
+		}
+		content = strings.ReplaceAll(content, "npm ci --ignore-scripts", installCmd)
 		content = strings.ReplaceAll(content, "npm run", pm+" run")
 		content = strings.ReplaceAll(content, `"npm`, `"`+pm)
 	}
